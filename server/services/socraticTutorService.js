@@ -452,8 +452,6 @@ async function getPrecomputedContent(courseName, topicId) {
  * based on the student's current cognitive level (Bloom's taxonomy).
  *
  * Mapping: L1_CONCEPT → easy | L2_APPLICATION → medium | L3_CRITICAL → hard | L4_EVALUATION → expert
- *
- * Question rotation: Uses questionIndex (0-2) to cycle through 3 questions at each level,
  * preventing repetition if the student retries the same level.
  *
  * @param {Object} precomputed - Cached content from getPrecomputedContent()
