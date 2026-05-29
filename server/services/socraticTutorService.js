@@ -38,6 +38,40 @@ const PEDAGOGICAL_MOVES = {
     COMPLETE: 'COMPLETE'            // Subtopic mastery achieved
 };
 
+/**
+ * SOCRATIC_STATES: The cognitive progression ladder for guided learning.
+ * Each state represents a phase in the student's understanding journey, from initial introduction to mastery. The tutor uses this framework to adapt its questioning and support strategies based on the student's current state, aiming to guide them through increasingly complex levels of understanding while providing appropriate scaffolding and challenges at each step.
+ * 
+ * Introduction: 
+ * Goal: Orient the student, build rapport, and set expectations.
+ * Behavior: Brief topic overview + simple opening question to gauge prior knowledge.
+ * Exit: Student engages -> advance to L1_Concept
+ *
+ * L1_CONCEPT:(Remembering)
+ * Goal: Establish foundational understanding of the core concept.
+ * Behavior: Ask recall questions ("What is X?"), confirm key terms are understood.
+ *   Exit: Student demonstrates basic understanding → advance to L2_APPLICATION.
+ *
+ * L2_APPLICATION (Understanding/Applying):
+ *   Goal: Connect concept to real-world scenarios and practical use.
+ *   Behavior: Ask "How would you use X in situation Y?" or "Give an example of X".
+ *   Exit: Student applies concept correctly → advance to L3_CRITICAL.
+ *
+ * L3_CRITICAL (Analyzing/Evaluating):
+ *   Goal: Develop critical thinking about limitations, edge cases, and biases.
+ *   Behavior: Ask "What are the weaknesses of X?" or "When might X fail?".
+ *   Exit: Student demonstrates nuanced understanding → advance to L4_EVALUATION.
+ *
+ * L4_EVALUATION (Creating/Designing):
+ *   Goal: Enable synthesis, comparison, and design thinking.
+ *   Behavior: Ask "How would you improve X?" or "Compare X vs Y for use case Z".
+ *   Exit: Student demonstrates mastery → advance to MASTERY_ACHIEVED.
+ *
+ * MASTERY_ACHIEVED:
+ *   Goal: Celebrate progress, consolidate learning, and transition to next topic.
+ *   Behavior: Summary of key takeaways + optional reflection prompt.
+ *   Exit: Session advances to next subtopic or completes course.
+ */
 const SOCRATIC_STATES = {
     INTRODUCTION: 'INTRODUCTION',
     ...COGNITIVE_LEVELS,
@@ -45,6 +79,7 @@ const SOCRATIC_STATES = {
 };
 
 // ─── Emotional State Detection (ported from Team1-6) ────────────────────────
+ 
 const EMOTIONAL_STATES = {
     CURIOUS: 'CURIOUS',
     CONFIDENT: 'CONFIDENT',
@@ -79,6 +114,29 @@ const SUPPORT_LEVELS = {
 /**
  * Multi-provider LLM call with automatic fallback (ported from Team1-6).
  * Tries preferred provider first, then falls back through all available providers.
+ * Logs each attempt and returns the first successful response, or throws an error if all fail. 
+ *
+ * Purpose: Ensures tutor reliability by trying multiple LLM providers in sequence.
+ * If the preferred provider fails (timeout, auth error, rate limit), automatically
+ * falls back to the next available provider until one succeeds or all are exhausted.
+ *
+ * Flow:
+ * 1. Start with preferred provider from llmConfig (default: 'gemini')
+ * 2. For each provider: check env/config → call generateContentWithHistory → validate response
+ * 3. Return first successful non-empty response
+ * 4. If all fail, throw aggregated error with last failure details
+ *
+ * Providers tried (in order): sglang → gemini → groq → claude → openai → ollama
+ * Note: sglang and ollama don't require API keys; others skip if key missing.
+ *
+ * @param {Array} chatHistory - Prior conversation turns (for context-aware generation)
+ * @param {string} currentQuery - The immediate prompt/question to answer
+ * @param {string} systemPrompt - System instructions to guide LLM behavior
+ * @param {Object} llmConfig - Provider preferences, API keys, model names
+ * @param {Object} additionalOptions - Extra params like jsonMode, temperature, etc.
+ * @returns {Promise<string>} The LLM's generated response text (trimmed)
+ * @throws {Error} If all configured providers fail to return a valid response 
+
  */
 async function generateWithFallback(chatHistory, currentQuery, systemPrompt, llmConfig, additionalOptions = {}) {
     const preferredProvider = llmConfig?.llmProvider || 'gemini';
@@ -166,6 +224,26 @@ async function generateWithFallback(chatHistory, currentQuery, systemPrompt, llm
 /**
  * Multi-dimensional assessment of student response with emotional state detection.
  * Ported from Team1-6's assessStudentResponse — produces richer signals for the FSM.
+ * Purpose: Evaluate not just correctness, but also confidence, emotional state, and effort
+ * to enable adaptive, empathetic tutoring. This richer signal drives the FSM's pedagogical decisions.
+ *
+ * What it assesses:
+ * - understanding: CORRECT | PARTIAL | MISCONCEPTION | VAGUE | NO_FOUNDATION
+ * - confidence: HIGH | MEDIUM | LOW (student's self-assurance in their answer)
+ * - emotionalState: CURIOUS | CONFIDENT | UNCERTAIN | FRUSTRATED | BORED
+ * - effortLevel: HIGH | MEDIUM | LOW (inferred from response length/detail)
+ * - specificGaps: Array of identified knowledge gaps for targeted remediation
+ * - reasoning: One-sentence LLM explanation of the classification
+ *
+ * Design principle: Be GENEROUS — reward genuine understanding even if incomplete.
+ * Only classify as PARTIAL if there's a specific, identifiable gap that matters.
+ *
+ * @param {string} studentResponse - The student's answer text
+ * @param {string} moduleTitle - Current topic/subtopic being taught
+ * @param {string} lastQuestion - The tutor's preceding question
+ * @param {Object} llmConfig - LLM provider configuration for assessment call
+ * @param {Array} conversationHistory - Optional prior turns for context
+ * @returns {Promise<Object>} Assessment object with understanding, confidence, emotionalState, etc.
  */
 async function assessStudentResponse(studentResponse, moduleTitle, lastQuestion, llmConfig, conversationHistory = []) {
     const prompt = `You are an expert educational assessor evaluating a student's response during an AI tutoring session.
@@ -224,7 +302,21 @@ Return ONLY valid JSON:
  * Determine adaptive support level based on emotional state + struggle history + response timing.
  * Merges T1-6 emotional detection with tutorStates.js Bloom's support levels.
  * Enhanced with timing signals for mood estimation.
- * 
+ * Purpose: Dynamically adjust how much scaffolding the tutor provides, balancing
+ * Socratic questioning (minimal help) with direct instruction (maximum help) based on
+ * the student's current needs.
+ *
+ * Support levels (from least to most supportive):
+ * - MINIMAL: Pure Socratic questioning — student is confident and progressing well
+ * - GUIDED: Question + subtle hint — student needs a nudge in the right direction
+ * - SCAFFOLDED: Example + explanation + question — student is struggling but engaged
+ * - DIRECT: Full explanation + simplified question — student is frustrated or stuck
+ *
+ * Decision factors:
+ * 1. Timing signals: Fast+wrong = guessing → scaffold; Slow+frustrated = give up → direct
+ * 2. Emotional state: Frustrated → direct; Bored → guided (re-engage); Confident → minimal
+ * 3. Struggle count: 1 wrong → guided; 2 wrong → scaffolded; 3+ wrong → direct
+ * 4. Understanding level: NO_FOUNDATION → scaffolded; CORRECT → minimal
  * @param {Object} sessionState - Current session state with struggleCount
  * @param {Object} assessment - Assessment result with understanding, confidence, emotionalState
  * @param {Number} responseTime - Time taken by student to respond (in seconds)
@@ -279,6 +371,12 @@ function determineSupportLevel(sessionState, assessment, responseTime = null) {
 
 /**
  * Clean LLM response to ensure no internal thinking leaks
+ *  Purpose: Strip any reasoning tags or internal monologue that the LLM might emit
+ * (e.g., "<thinking>...</thinking>", "Thought: ...") before showing the response
+ * to the student. Ensures a clean, tutor-appropriate output.
+ *
+ * @param {string} text - Raw LLM output
+ * @returns {string} Sanitized response ready for student display
  */
 function cleanResponse(text) {
     if (!text) return "";
@@ -326,6 +424,14 @@ function fallbackLearningSteps() {
 /**
  * Fetch pre-computed Socratic content from Redis (written by Python rag_service).
  * Cache key format matches Python: im_cache:socratic_precompute:{course}:{topic_id}
+ * Purpose: Enable zero-latency tutor responses by caching pre-generated intros,
+ * questions, and teaching notes. Cache key format: im_cache:socratic_precompute:{course}:{topic_id}
+ *
+ * Fallback: Returns null if Redis unavailable or key not found → caller falls back to LLM generation.
+ *
+ * @param {string} courseName - Course identifier (e.g., "machine-learning-basics")
+ * @param {string} topicId - Topic or subtopic identifier
+ * @returns {Promise<Object|null>} Cached content object or null if not found
  */
 async function getPrecomputedContent(courseName, topicId) {
     if (!courseName || !topicId) return null;
@@ -341,7 +447,19 @@ async function getPrecomputedContent(courseName, topicId) {
 /**
  * Pick a precomputed question for a given cognitive level.
  * Maps L1→easy, L2→medium, L3→hard, L4→expert.
- * questionIndex cycles 0-2 through the 3 questions at that level.
+ * 
+ * Purpose: Select an appropriately-difficult Socratic question from the precomputed pool
+ * based on the student's current cognitive level (Bloom's taxonomy).
+ *
+ * Mapping: L1_CONCEPT → easy | L2_APPLICATION → medium | L3_CRITICAL → hard | L4_EVALUATION → expert
+ *
+ * Question rotation: Uses questionIndex (0-2) to cycle through 3 questions at each level,
+ * preventing repetition if the student retries the same level.
+ *
+ * @param {Object} precomputed - Cached content from getPrecomputedContent()
+ * @param {string} cognitiveLevel - One of COGNITIVE_LEVELS (L1_CONCEPT, etc.)
+ * @param {Number} questionIndex - Which question in the bucket to pick (0, 1, or 2)
+ * @returns {string|null} Selected question text or null if not available
  */
 function pickPrecomputedQuestion(precomputed, cognitiveLevel, questionIndex = 0) {
     if (!precomputed?.questions) return null;
@@ -360,6 +478,19 @@ function pickPrecomputedQuestion(precomputed, cognitiveLevel, questionIndex = 0)
 /**
  * Resume or start a tutor session for a user+course.
  * Returns greeting message, current position, and precomputed intro if available.
+ * Purpose: Initialize or continue a learning session, providing a personalized greeting
+ * and positioning the student at their last progress point (or the start if new).
+ *
+ * Returns:
+ * - isNew: Boolean indicating if this is a first-time session
+ * - greeting: Personalized welcome message with progress context
+ * - position: Current curriculum position (module/topic/subtopic)
+ * - precomputed: Optional cached intro + first question for instant start
+ * - progress: Summary of completed items and last active date
+ *
+ * @param {string} userId - Student identifier
+ * @param {string} courseName - Course to resume/start
+ * @returns {Promise<Object>} Session initialization object
  */
 async function resumeOrStartSession(userId, courseName) {
     const progress = await loadUserProgress(userId, courseName);
@@ -458,6 +589,24 @@ async function buildInitialLearningPath(courseName, position = null) {
 /**
  * Generate initial response for a topic/subtopic.
  * Uses precomputed intro+question from Redis when available (zero LLM latency).
+ * Purpose: Start a Socratic lesson by introducing the topic conversationally and
+ * asking the first guiding question. Prioritizes precomputed content for zero latency;
+ * falls back to LLM generation if cache miss.
+ *
+ * Response structure (when generated):
+ * 1. Two short paragraphs explaining the foundational concept
+ * 2. One simple real-world analogy or example (max 3 sentences)
+ * 3. ONE focused Socratic question requiring reasoning (no answer provided)
+ *
+ * Constraints: Natural dialogue tone, <200 words total, no structural headings,
+ * no internal thinking tags.
+ *
+ * @param {string} topic - Topic/subtopic name to teach
+ * @param {string} context - Background knowledge/context for factual grounding
+ * @param {Object} llmConfig - LLM provider configuration
+ * @param {Object} position - Optional curriculum position for contextual prompts
+ * @param {Function} onToken - Optional streaming callback for real-time output
+ * @returns {Promise<string>} Sanitized introductory response + first question
  */
 async function startSocraticSession(topic, context, llmConfig, position = null, onToken = null) {
     // ── Fast path: use precomputed content from Redis ──────────────────────────
@@ -536,6 +685,34 @@ CRITICAL RULES:
 
 /**
  * Process the response loop
+ * Purpose: Handle a student's answer, assess understanding/emotion, decide pedagogical action,
+ * generate an adaptive follow-up, and update session state — all while supporting streaming,
+ * fallback providers, and gamification integration.
+ *
+ * High-level flow:
+ * 1. LOAD: Fetch current session state + student knowledge profile
+ * 2. ANALYZE: Call assessStudentResponse() for multi-dimensional evaluation
+ * 3. ADAPT: Call determineSupportLevel() + decideTeachingAction() for strategy
+ * 4. GENERATE: Prompt LLM with rich context (emotion, support level, knowledge gaps, policy)
+ * 5. UPDATE: Adjust mastery score, cognitive level, learning path, and history
+ * 6. PERSIST: Save session state + update StudentKnowledgeState (fire-and-forget)
+ * 7. RETURN: Structured response for UI rendering (question, classification, progress, etc.)
+ *
+ * Key adaptive features:
+ * - Emotional awareness: Adjusts tone and support based on frustration/boredom/confidence
+ * - Timing signals: Uses response time to infer guessing vs. struggling
+ * - Struggle escalation: Increases scaffolding after consecutive wrong answers
+ * - Mastery tracking: Cumulative score + consecutive correct answers determine advancement
+ * - Gamification: Awards credits/XP on subtopic mastery (fire-and-forget)
+ * - Knowledge persistence: Updates StudentKnowledgeState with misconceptions, patterns, mastery
+ *
+ * @param {string} studentResponse - The student's answer to the last question
+ * @param {string} sessionId - Unique session identifier for state management
+ * @param {Object} llmConfig - LLM provider configuration
+ * @param {Function} onProgress - Optional callback for status updates
+ * @param {Function} onToken - Optional streaming callback for token-by-token output
+ * @param {Object} metadata - Optional metadata (e.g., responseTime for mood estimation)
+ * @returns {Promise<Object>} Structured response with follow-up question, classification, progress, etc.
  */
 async function processTutorResponse(studentResponse, sessionId, llmConfig, onProgress, onToken = null, metadata = {}) {
     const state = await getTutorSessionState(sessionId);
@@ -1111,6 +1288,19 @@ async function getTopicContext(course, topicId) {
  * STN is pre-generated from course material (marker-pdf Markdown) offline —
  * returns in ~5ms vs ~300ms for a live Qdrant vector search.
  * Falls back to live Qdrant context if no STN is cached.
+ * 
+ * Purpose: Provide instant access to pre-generated teaching context (offline-processed
+ * from course materials) instead of waiting for live vector search. Falls back to
+ * Qdrant search if STN cache miss.
+ *
+ * Performance: ~5ms cache hit vs ~300ms live search — critical for responsive tutoring.
+ *
+ * Return shape: Matches caller expectations with teaching_notes + qdrant_chunks + source flag.
+ *
+ * @param {string} course - Course identifier
+ * @param {string} subtopicId - Subtopic identifier (preferred)
+ * @param {string} topicId - Topic identifier (fallback if subtopicId missing)
+ * @returns {Promise<Object|null>} Context object with teaching notes and chunks, or null
  */
 async function getSubtopicContext(course, subtopicId, topicId) {
     const pythonServiceUrl = process.env.PYTHON_RAG_SERVICE_URL;
@@ -1270,6 +1460,14 @@ async function resolveCurrentPosition(courseName, completedSubtopics = [], compl
 
 /**
  * Get the full curriculum structure from the RAG service, with Redis caching
+ * Purpose: Fetch and cache the course's module/topic/subtopic hierarchy for navigation
+ * and progress tracking. Cache TTL: 1 hour to balance freshness vs. performance.
+ *
+ * Cache strategy: Only cache non-empty structures with at least one topic to avoid
+ * propagating incomplete curriculum data.
+ *
+ * @param {string} courseName - Course identifier
+ * @returns {Promise<Object>} Curriculum structure with modules array, or empty fallback
  */
 async function getCurriculumStructure(courseName) {
     try {
