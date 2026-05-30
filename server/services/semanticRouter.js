@@ -1,5 +1,18 @@
 // server/services/semanticRouter.js
 /**
+ * ROLE: Full intent classification layer — classifies query intent into named
+ * categories (DEEP_RESEARCH, ACADEMIC_SEARCH, SOCRATIC_TUTORING, etc.),
+ * selects tools and LLM, and handles rejections (inappropriate queries).
+ * Caches example embeddings to disk on first run.
+ *
+ * RELATIONSHIP TO semanticRouterService.js:
+ * These are two SEPARATE routing layers, not duplicates:
+ *  - semanticRouter.js         → WHAT kind of query is this? (intent classification)
+ *  - semanticRouterService.js  → WHERE should this query go? (route selection via prototypes + Redis)
+ * Both are used by the main chat pipeline at different decision points.
+ */
+// server/services/semanticRouter.js
+/**
  * Semantic Router - Intelligent Query Classification & Tool Selection
  *
  * Uses vector embeddings to match queries against predefined intent categories.
