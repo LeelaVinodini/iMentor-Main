@@ -76,9 +76,22 @@ This avoids blocking on sequential execution and allows for efficient handling o
                         const retrieval = await routeRetrieval(step.description, context);
                         result = JSON.stringify(retrieval);
                     } else {
-                        //TODO: Replace with actual tool execution logic for non-retrieval steps. For now, we simulate a result.
-                        result = `Simulated result for: ${step.description}`;
-                    }
+                            // Route non-retrieval steps through toolRegistry using lazy require().
+                            // Lazy require (inside the function, not at the top of the file) avoids
+                             // the circular dependency — by the time this line runs, both modules are
+                            // fully loaded and the cycle is no longer an issue.
+                            const { availableTools } = require('./toolRegistry');
+                            const tool = availableTools[step.tool];
+                            if (tool) {
+                            const toolResult = await tool.execute(step.params || { query: step.description }, context);
+                            result = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+                            } else {
+                                // Tool name from decomposition didn't match any registered tool.
+                                // Log it clearly so it's easy to debug which tool name is wrong.
+                                console.warn(`[Agent] No tool found for "${step.tool}" — step ${step.id} skipped.`);
+                                result = `No tool registered for "${step.tool}". Known tools: ${Object.keys(availableTools).join(', ')}`;
+                            }
+                        }
                     return { id: step.id, result };
                 })().catch(e => {
                     //Graceful error handling: log the error and return an error result for this step, allowing the rest of the execution to continue unaffected. This ensures that a failure in one step does not halt the entire process, while still providing visibility into what went wrong for that specific step.
@@ -97,10 +110,11 @@ This avoids blocking on sequential execution and allows for efficient handling o
         //Rejected promises are already handled in the catch block of the individual step execution, so we don't need to do anything special here for rejected outcomes. The error is logged and the result is set to an error message, allowing the execution to continue without interruption.
     }
 //3. Return structured output for downstream synthesis/response construction
+    // - plan: The original decomposition (useful for debugging and step-awareness in response synthesis)
+    // - execution_trace: List of [stepId, result] for answer synthesis and user-facing explanations
     return {
-        plan: plan,//The original decomposition (useful for debugging or step-awareness in response synthesis) and the execution trace (stepId -> result) are returned for use in constructing the final response to the user, allowing for transparency and potential step-level insights in the final output.
-
-        execution_trace: Array.from(results.entries())//List of [stepId, result] for answer synthesis and potential user-facing explanations.
+        plan: plan,
+        execution_trace: Array.from(results.entries())
     };
 }
 module.exports = { executeAgentTask };
