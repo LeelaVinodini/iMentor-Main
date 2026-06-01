@@ -24,7 +24,7 @@ async function routeRetrieval(query, context) {
 
     console.log(`[RetrievalRouter] Strategy selected via Semantic ML: ${decision}`);
 
-    console.log(`[RetrievalRouter] Strategy selected: ${decision}`);
+    
 
     // 2. Cache and Execute
     await setCachedRoute(query, decision);
@@ -47,14 +47,14 @@ async function executeStrategy(decision, query, context) {
         } else if (decision === 'GRAPH') {
             const res = await axios.post(`${RAG_SERVICE_URL}/graph_rag/search`, {
                 query,
-                user_id: context.user.id,
+                user_id: context?.user?.id,
                 documentContextName: _docCtx
             });
             results.graph = res.data.facts;
         } else if (decision === 'VECTOR') {
             const res = await axios.post(`${RAG_SERVICE_URL}/query`, {
                 query,
-                user_id: context.user.id,
+                user_id: context?.user?.id,
                 k: 3,
                 documentContextName: _docCtx,
                 source_type: _sourceType
@@ -64,12 +64,12 @@ async function executeStrategy(decision, query, context) {
             const [graphRes, vectorRes] = await Promise.all([
                 axios.post(`${RAG_SERVICE_URL}/graph_rag/search`, {
                     query,
-                    user_id: context.user.id,
+                    user_id: context?.user?.id,
                     documentContextName: _docCtx
                 }).catch(e => ({ data: { facts: [] } })),
                 axios.post(`${RAG_SERVICE_URL}/query`, {
                     query,
-                    user_id: context.user.id,
+                    user_id: context?.user?.id,
                     k: 3,
                     documentContextName: _docCtx,
                     source_type: _sourceType

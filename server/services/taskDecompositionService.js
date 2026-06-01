@@ -83,5 +83,6 @@ async function decomposeQuery(query, requestContext) {
 }
 
 module.exports = {
-  decomposeQuery
+    decomposeQuery,
+    decomposeTask: decomposeQuery  // alias — agentOrchestrator.js imports this name
 };
