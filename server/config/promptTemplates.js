@@ -907,7 +907,13 @@ FINAL JSON OUTPUT:
 // ============================================================================
 
 const SOCRATIC_INTRO_PROMPT = (topic, context = "") => {
-  const contextHint = context ? `\n\n[OFFICIAL COURSE CONTEXT]:\n${safe(String(context).substring(0, 1500))}` : '';
+  const contextHint = context ? `\n\n[OFFICIAL COURSE CONTEXT]:\n${(() => {
+    const ctx = String(context);
+    if (ctx.length > 1500) {
+        console.warn(`[SOCRATIC_INTRO_PROMPT] Context truncated: ${ctx.length} → 1500 chars for topic "${topic}"`);
+    }
+    return safe(ctx.substring(0, 1500));
+})()}` : '';
 
   return `### SYSTEM INSTRUCTION: STUDY MODE TEACHING PHASE (PHASE 1)
 You are iMentor, a Senior Academic Tutor. Your goal is to provide a clear, structured foundation for the student before asking any questions.
@@ -937,7 +943,7 @@ Begin the structured explanation:`;
 // ============================================================================
 
 const SOCRATIC_CLASSIFICATION_PROMPT = (moduleTitle, previousQuestion, studentResponse, context = "") => {
-  const contextHint = context ? `\n\n[DOMAIN CONTEXT]:\n"""\n${safe(context)}\n"""` : '';
+  const contextHint = context ? `\n\n[COURSE MATERIAL FOR GROUNDING]:\n"""\n${safe(context)}\n"""` : '';
 
   return `### SYSTEM INSTRUCTION: LEARNING PROGRESS ASSESSMENT
 Analyze the student's level of mastery for: "${safe(moduleTitle)}".
@@ -978,6 +984,8 @@ You are an adaptive Socratic Tutor. Your task is to provide feedback and the NEX
 - Student Answer: "${safe(studentResponse)}"
 - Assessment: ${safe(classification)}
 - Move Decision: ${safe(pedagogicalMove)}
+- Cognitive Level: ${safe(currentLevel)} (L1=recall, L2=apply, L3=analyse, L4=design)
+- Current Score: ${safe(String(currentScore))} / 2.5
 ${contextHint}
 
 **RESPONSE STRUCTURE:**
